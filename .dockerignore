@@ -1,0 +1,8 @@
+.env
+.git
+.idea
+.laravel-bootstrap
+.vscode
+node_modules
+storage/logs/*
+vendor
