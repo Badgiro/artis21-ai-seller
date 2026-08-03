@@ -9,6 +9,20 @@ enum FurnitureType: string
     case Sofa = 'sofa';
     case Bed = 'bed';
 
+    /**
+     * @return array<string, string>
+     */
+    public static function options(): array
+    {
+        $options = [];
+
+        foreach (self::cases() as $type) {
+            $options[$type->value] = $type->label();
+        }
+
+        return $options;
+    }
+
     public function label(): string
     {
         return match ($this) {
