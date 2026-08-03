@@ -3,10 +3,19 @@
 namespace App\Filament\Pages;
 
 use App\Enums\ConversationStage;
+use App\Enums\FurnitureStyle;
+use App\Enums\FurnitureType;
+use App\Exceptions\LlmUnavailableException;
+use App\Models\Furniture;
+use App\Services\AiSellerService;
+use App\Services\FurnitureRecommendationService;
+use App\Services\LeadSubmissionService;
 use BackedEnum;
 use Filament\Pages\Page;
 use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Collection;
+use Throwable;
 
 class AiSeller extends Page
 {
@@ -14,7 +23,11 @@ class AiSeller extends Page
 
     private const GREETING = 'Здравствуйте! Я помогу подобрать мебель и оформить заявку. Что вас интересует?';
 
-    private const FAKE_RESPONSE = 'Сообщение получено. AI-интеграция будет подключена на следующем этапе.';
+    private const UNAVAILABLE_MESSAGE = 'Сервис временно недоступен. Попробуйте отправить сообщение ещё раз.';
+
+    private const SUBMITTED_MESSAGE = 'Заявка принята, менеджер свяжется с вами.';
+
+    private const SUBMISSION_ERROR_MESSAGE = 'Не удалось отправить заявку. Пожалуйста, попробуйте ещё раз.';
 
     protected static ?string $title = 'AI-продавец';
 
@@ -43,6 +56,10 @@ class AiSeller extends Page
      */
     public array $recommendedFurnitureIds = [];
 
+    public ?string $recommendationFingerprint = null;
+
+    public ?int $submittedLeadId = null;
+
     public string $stage = ConversationStage::New->value;
 
     public bool $readyToSubmit = false;
@@ -54,11 +71,16 @@ class AiSeller extends Page
         $this->restoreState();
     }
 
-    public function sendMessage(): void
+    public function getHeading(): ?string
+    {
+        return null;
+    }
+
+    public function sendMessage(AiSellerService $aiSeller): void
     {
         $content = trim($this->message);
 
-        if ($content === '') {
+        if ($content === '' || $this->stage === ConversationStage::Submitted->value) {
             return;
         }
 
@@ -68,7 +90,58 @@ class AiSeller extends Page
         ];
         $this->message = '';
 
-        $this->appendTemporaryAssistantResponse();
+        try {
+            $turn = $aiSeller->processTurn(
+                $this->messages,
+                $this->leadDraft,
+                $this->recommendedFurnitureIds,
+                $this->recommendationFingerprint,
+            );
+
+            $this->leadDraft = $turn['leadDraft'];
+            $this->stage = $turn['stage']->value;
+            $this->readyToSubmit = $turn['readyToSubmit'];
+            $this->recommendedFurnitureIds = $turn['recommendedFurnitureIds'];
+            $this->recommendationFingerprint = $turn['recommendationFingerprint'];
+            $this->messages[] = [
+                'role' => 'assistant',
+                'content' => $turn['assistantMessage'],
+            ];
+        } catch (LlmUnavailableException) {
+            $this->messages[] = [
+                'role' => 'assistant',
+                'content' => self::UNAVAILABLE_MESSAGE,
+            ];
+        }
+
+        $this->persistState();
+    }
+
+    public function submitLead(LeadSubmissionService $leadSubmission): void
+    {
+        if (! $this->canSubmit()) {
+            return;
+        }
+
+        try {
+            $lead = $leadSubmission->submit($this->leadDraft);
+
+            $this->submittedLeadId = $lead->getKey();
+            $this->stage = ConversationStage::Submitted->value;
+            $this->readyToSubmit = false;
+            $this->messages[] = [
+                'role' => 'assistant',
+                'content' => self::SUBMITTED_MESSAGE,
+            ];
+        } catch (Throwable $exception) {
+            report($exception);
+
+            $this->messages[] = [
+                'role' => 'assistant',
+                'content' => self::SUBMISSION_ERROR_MESSAGE,
+            ];
+        }
+
         $this->persistState();
     }
 
@@ -87,6 +160,22 @@ class AiSeller extends Page
         return ConversationStage::tryFrom($this->stage)?->label() ?? '—';
     }
 
+    public function canSubmit(): bool
+    {
+        return $this->readyToSubmit
+            && $this->submittedLeadId === null
+            && $this->stage !== ConversationStage::Submitted->value;
+    }
+
+    /**
+     * @return Collection<int, Furniture>
+     */
+    public function recommendedFurniture(): Collection
+    {
+        return app(FurnitureRecommendationService::class)
+            ->findByIds($this->recommendedFurnitureIds);
+    }
+
     public function leadValue(string $key): string
     {
         $value = $this->leadDraft[$key] ?? null;
@@ -96,7 +185,22 @@ class AiSeller extends Page
         }
 
         if ($key === 'budget' && is_numeric($value)) {
-            return number_format((float) $value, 2, ',', ' ').' ₽';
+            [$integer, $fraction] = array_pad(explode('.', (string) $value, 2), 2, null);
+            $formatted = number_format((int) $integer, 0, ',', ' ');
+
+            if ($fraction !== null && trim($fraction, '0') !== '') {
+                $formatted .= ','.rtrim($fraction, '0');
+            }
+
+            return $formatted.' ₽';
+        }
+
+        if ($key === 'furniture_type') {
+            return FurnitureType::tryFrom((string) $value)?->label() ?? '—';
+        }
+
+        if ($key === 'style') {
+            return FurnitureStyle::tryFrom((string) $value)?->label() ?? '—';
         }
 
         return (string) $value;
@@ -114,26 +218,16 @@ class AiSeller extends Page
         $this->persistState();
     }
 
-    /**
-     * This temporary behavior is intentionally isolated for replacement by the
-     * real AI integration at the next stage.
-     */
-    private function appendTemporaryAssistantResponse(): void
-    {
-        $this->messages[] = [
-            'role' => 'assistant',
-            'content' => self::FAKE_RESPONSE,
-        ];
-    }
-
     private function persistState(): void
     {
         session()->put(self::SESSION_KEY, [
             'messages' => $this->messages,
             'leadDraft' => $this->leadDraft,
             'recommendedFurnitureIds' => $this->recommendedFurnitureIds,
+            'recommendationFingerprint' => $this->recommendationFingerprint,
             'stage' => $this->stage,
             'readyToSubmit' => $this->readyToSubmit,
+            'submittedLeadId' => $this->submittedLeadId,
         ]);
     }
 
@@ -153,9 +247,15 @@ class AiSeller extends Page
         $this->recommendedFurnitureIds = is_array($state['recommendedFurnitureIds'] ?? null)
             ? $state['recommendedFurnitureIds']
             : [];
+        $this->recommendationFingerprint = is_string($state['recommendationFingerprint'] ?? null)
+            ? $state['recommendationFingerprint']
+            : null;
         $this->stage = ConversationStage::tryFrom((string) ($state['stage'] ?? ''))?->value
             ?? ConversationStage::New->value;
         $this->readyToSubmit = (bool) ($state['readyToSubmit'] ?? false);
+        $this->submittedLeadId = is_numeric($state['submittedLeadId'] ?? null)
+            ? (int) $state['submittedLeadId']
+            : null;
     }
 
     /**
@@ -163,8 +263,10 @@ class AiSeller extends Page
      *     messages: array<int, array{role: string, content: string}>,
      *     leadDraft: array<string, mixed>,
      *     recommendedFurnitureIds: array<int, int>,
+     *     recommendationFingerprint: ?string,
      *     stage: string,
-     *     readyToSubmit: bool
+     *     readyToSubmit: bool,
+     *     submittedLeadId: ?int
      * }
      */
     private function initialState(): array
@@ -178,8 +280,10 @@ class AiSeller extends Page
             ],
             'leadDraft' => [],
             'recommendedFurnitureIds' => [],
+            'recommendationFingerprint' => null,
             'stage' => ConversationStage::New->value,
             'readyToSubmit' => false,
+            'submittedLeadId' => null,
         ];
     }
 }

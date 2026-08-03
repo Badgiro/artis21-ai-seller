@@ -1,20 +1,26 @@
 <x-filament-panels::page>
-    <div class="grid gap-6 lg:grid-cols-3">
-        <section class="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10 lg:col-span-2">
-            <header class="flex flex-col gap-4 border-b border-gray-200 px-6 py-5 dark:border-white/10 sm:flex-row sm:items-center sm:justify-between">
+    <div class="ai-seller-page">
+        <header class="ai-seller-hero">
+            <h1>AI-продавец Artis21</h1>
+            <p>
+                Отвечает за секунды 24/7, квалифицирует, рекомендует из каталога и записывает на замер.
+                Справа — то, что агент извлёк из разговора.
+            </p>
+        </header>
+
+        <div class="ai-seller-grid">
+            <section class="ai-seller-panel ai-seller-chat">
+                <header class="ai-seller-panel-header">
                 <div class="flex items-center gap-3">
-                    <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white">
-                        <x-filament::icon
-                            icon="heroicon-o-sparkles"
-                            class="size-6"
-                        />
+                    <div class="ai-seller-avatar">
+                        A
                     </div>
 
                     <div>
-                        <h2 class="text-base font-semibold text-gray-950 dark:text-white">
+                        <h2>
                             Artis21 · AI-продавец
                         </h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">
+                        <p>
                             Мебель от производителя · 24/7
                         </p>
                     </div>
@@ -26,43 +32,75 @@
                     icon="heroicon-o-arrow-path"
                     wire:click="newConversation"
                     wire:loading.attr="disabled"
-                    wire:target="newConversation,sendMessage"
+                    wire:target="newConversation,sendMessage,submitLead"
                 >
                     Новый диалог
                 </x-filament::button>
-            </header>
+                </header>
 
-            <div
-                class="flex min-h-96 flex-col gap-4 overflow-y-auto bg-gray-50/60 p-6 dark:bg-gray-950/30"
-                aria-live="polite"
-            >
-                @foreach ($messages as $index => $chatMessage)
-                    <div
-                        wire:key="chat-message-{{ $index }}"
-                        @class([
-                            'flex',
-                            'justify-end' => $chatMessage['role'] === 'user',
-                            'justify-start' => $chatMessage['role'] !== 'user',
-                        ])
-                    >
+                <div class="ai-seller-chat-content" aria-live="polite">
+                    @foreach ($messages as $index => $chatMessage)
                         <div
+                            wire:key="chat-message-{{ $index }}"
                             @class([
-                                'max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm sm:max-w-[75%]',
-                                'rounded-br-md bg-primary-600 text-white' => $chatMessage['role'] === 'user',
-                                'rounded-bl-md bg-white text-gray-950 ring-1 ring-gray-950/5 dark:bg-gray-800 dark:text-white dark:ring-white/10' => $chatMessage['role'] !== 'user',
+                                'ai-seller-message-row',
+                                'is-user' => $chatMessage['role'] === 'user',
                             ])
                         >
-                            {{ $chatMessage['content'] }}
+                            <div
+                                @class([
+                                    'ai-seller-message',
+                                    'is-user' => $chatMessage['role'] === 'user',
+                                    'is-assistant' => $chatMessage['role'] !== 'user',
+                                ])
+                            >
+                                {{ $chatMessage['content'] }}
+                            </div>
                         </div>
-                    </div>
-                @endforeach
-            </div>
+                    @endforeach
 
-            <form
-                wire:submit="sendMessage"
-                class="border-t border-gray-200 p-4 dark:border-white/10"
-            >
-                <div class="flex flex-col gap-3 sm:flex-row">
+                    @php($recommendedFurniture = $this->recommendedFurniture())
+
+                    @if ($recommendedFurniture->isNotEmpty())
+                        <section class="ai-seller-recommendations" wire:key="recommendations">
+                            <div class="ai-seller-recommendations-heading">
+                                <div>
+                                    <h3>Подходящие варианты</h3>
+                                    <p>Реальные позиции из каталога Artis21</p>
+                                </div>
+                                <span>{{ $recommendedFurniture->count() }}</span>
+                            </div>
+
+                            <div class="ai-seller-products">
+                                @foreach ($recommendedFurniture as $furniture)
+                                    <article class="ai-seller-product" wire:key="furniture-{{ $furniture->getKey() }}">
+                                        <h4>{{ $furniture->name }}</h4>
+                                        <dl>
+                                            <div>
+                                                <dt>Тип</dt>
+                                                <dd>{{ $furniture->type->label() }}</dd>
+                                            </div>
+                                            <div>
+                                                <dt>Цена</dt>
+                                                <dd>{{ number_format((float) $furniture->price, 0, ',', ' ') }} ₽</dd>
+                                            </div>
+                                            <div>
+                                                <dt>Размер</dt>
+                                                <dd>{{ $furniture->room_size }}</dd>
+                                            </div>
+                                            <div>
+                                                <dt>Стиль</dt>
+                                                <dd>{{ $furniture->style->label() }}</dd>
+                                            </div>
+                                        </dl>
+                                    </article>
+                                @endforeach
+                            </div>
+                        </section>
+                    @endif
+                </div>
+
+                <form wire:submit="sendMessage" class="ai-seller-composer">
                     <label for="ai-seller-message" class="sr-only">
                         Сообщение
                     </label>
@@ -75,7 +113,8 @@
                         wire:target="sendMessage"
                         autocomplete="off"
                         placeholder="Напишите сообщение..."
-                        class="block min-w-0 flex-1 rounded-lg border-0 bg-white px-3 py-2 text-sm text-gray-950 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 disabled:opacity-70 dark:bg-white/5 dark:text-white dark:ring-white/20 dark:placeholder:text-gray-500"
+                        @disabled($stage === \App\Enums\ConversationStage::Submitted->value)
+                        class="ai-seller-input"
                     >
 
                     <x-filament::button
@@ -83,68 +122,74 @@
                         icon="heroicon-o-paper-airplane"
                         wire:loading.attr="disabled"
                         wire:target="sendMessage"
+                        :disabled="$stage === \App\Enums\ConversationStage::Submitted->value"
                     >
                         <span wire:loading.remove wire:target="sendMessage">Отправить</span>
                         <span wire:loading wire:target="sendMessage">Отправка…</span>
                     </x-filament::button>
-                </div>
-            </form>
-        </section>
+                </form>
+            </section>
 
-        <aside class="self-start overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-            <header class="border-b border-gray-200 px-6 py-5 dark:border-white/10">
-                <div class="flex items-center gap-3">
-                    <div class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white">
+            <aside class="ai-seller-panel ai-seller-lead">
+                <header class="ai-seller-panel-header">
+                    <div class="flex items-center gap-3">
+                        <div class="ai-seller-lead-icon">
                         <x-filament::icon
                             icon="heroicon-o-identification"
                             class="size-6"
                         />
-                    </div>
+                        </div>
 
-                    <div>
-                        <h2 class="text-base font-semibold text-gray-950 dark:text-white">
-                            Карточка текущего лида
-                        </h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">
-                            Данные из диалога
-                        </p>
+                        <div>
+                            <h2>Карточка текущего лида</h2>
+                            <p>Данные из диалога</p>
+                        </div>
                     </div>
-                </div>
-            </header>
+                </header>
 
-            <div class="space-y-5 p-6">
-                <div>
-                    <span class="inline-flex items-center rounded-full bg-primary-50 px-3 py-1 text-sm font-medium text-primary-700 ring-1 ring-inset ring-primary-700/10 dark:bg-primary-400/10 dark:text-primary-400">
+                <div class="ai-seller-lead-content">
+                    <span class="ai-seller-stage">
                         Этап: {{ $this->stageLabel() }}
                     </span>
+
+                    <dl class="ai-seller-lead-fields">
+                        @foreach ([
+                            'furniture_type' => 'Тип мебели',
+                            'budget' => 'Бюджет',
+                            'room_size' => 'Помещение/размер',
+                            'style' => 'Стиль',
+                            'timeline' => 'Сроки',
+                            'city' => 'Город',
+                            'name' => 'Имя',
+                            'phone' => 'Телефон',
+                        ] as $key => $label)
+                            <div>
+                                <dt>{{ $label }}</dt>
+                                <dd>{{ $this->leadValue($key) }}</dd>
+                            </div>
+                        @endforeach
+                    </dl>
+
+                    @if ($this->canSubmit())
+                        <x-filament::button
+                            type="button"
+                            size="lg"
+                            icon="heroicon-o-paper-airplane"
+                            wire:click="submitLead"
+                            wire:loading.attr="disabled"
+                            wire:target="submitLead"
+                            class="w-full"
+                        >
+                            <span wire:loading.remove wire:target="submitLead">Отправить заявку</span>
+                            <span wire:loading wire:target="submitLead">Отправка…</span>
+                        </x-filament::button>
+                    @endif
+
+                    <p class="ai-seller-lead-note">
+                        Карточка обновляется автоматически. Данные сохраняются в заявку только после подтверждения.
+                    </p>
                 </div>
-
-                <dl class="divide-y divide-gray-200 rounded-xl bg-gray-50 px-4 dark:divide-white/10 dark:bg-white/5">
-                    @foreach ([
-                        'furniture_type' => 'Тип мебели',
-                        'budget' => 'Бюджет',
-                        'room_size' => 'Помещение/размер',
-                        'style' => 'Стиль',
-                        'timeline' => 'Сроки',
-                        'city' => 'Город',
-                        'name' => 'Имя',
-                        'phone' => 'Телефон',
-                    ] as $key => $label)
-                        <div class="flex items-start justify-between gap-4 py-3">
-                            <dt class="text-sm text-gray-500 dark:text-gray-400">
-                                {{ $label }}
-                            </dt>
-                            <dd class="text-right text-sm font-medium text-gray-950 dark:text-white">
-                                {{ $this->leadValue($key) }}
-                            </dd>
-                        </div>
-                    @endforeach
-                </dl>
-
-                <p class="text-xs leading-5 text-gray-500 dark:text-gray-400">
-                    На этом этапе карточка доступна только для просмотра. AI-интеграция будет подключена позже.
-                </p>
-            </div>
-        </aside>
+            </aside>
+        </div>
     </div>
 </x-filament-panels::page>
